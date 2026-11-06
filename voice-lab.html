@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Voice Changer &amp; Equalizer</title>
+<style>
+:root{--bg:#f7f7f5;--card:#fff;--text:#1c1c1a;--mut:#6b6b66;--line:#dcdcd6;--a:#2563eb;--b:#e11d48;--c:#059669;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);color-scheme:light}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#141413;--card:#1f1f1d;--text:#ececE8;--mut:#9a9a93;--line:#34342f;--a:#60a5fa;--b:#fb7185;--c:#34d399;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#141413;--card:#1f1f1d;--text:#ececE8;--mut:#9a9a93;--line:#34342f;--a:#60a5fa;--b:#fb7185;--c:#34d399;color-scheme:dark}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;line-height:1.45}
+main{max-width:860px;margin:0 auto;padding:16px}
+h1{font-size:1.4rem;margin:8px 0 2px}
+h3{font-size:.95rem;margin:0 0 8px}
+.sub,.note{color:var(--mut);font-size:.85rem}
+.sub{margin:0 0 14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:12px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+button{border:1px solid var(--line);background:var(--card);color:var(--text);padding:8px 12px;border-radius:8px;cursor:pointer;font-size:.9rem}
+button.p{background:var(--a);color:#fff;border-color:var(--a)}
+button.rec{background:var(--b);color:#fff;border-color:var(--b)}
+button:disabled{opacity:.5;cursor:default}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}
+label{font-size:.8rem;color:var(--mut);display:flex;flex-direction:column;gap:3px}
+label b{color:var(--text)}
+input[type=range]{width:100%}
+canvas{width:100%;height:150px;display:block;background:var(--bg);border-radius:8px}
+#st{font-size:.85rem;color:var(--c);margin-top:8px;min-height:1.2em}
+.err{color:var(--b)!important}
+ul{margin:6px 0 0;padding-left:18px;font-size:.85rem;color:var(--mut)}
+</style>
+</head>
+<body>
+<main>
+<h1>🎙️ Voice Changer &amp; Equalizer</h1>
+<p class="sub">Awaaz record karo (ya file/demo use karo), effects lagao, aur dekho signal ke saath kya hota hai.</p>
+
+<div class="card">
+<h3>1. Source</h3>
+<div class="row">
+<button id="rec" class="rec">● Record</button>
+<label style="flex-direction:row;align-items:center;gap:6px"><span>Audio file:</span><input id="file" type="file" accept="audio/*" style="font-size:.8rem;max-width:190px"></label>
+<button id="demo">Demo voice</button>
+</div>
+<div id="st"></div>
+</div>
+
+<div class="card">
+<h3>2. Presets</h3>
+<div class="row" id="presets"></div>
+</div>
+
+<div class="card">
+<h3>3. Controls</h3>
+<div class="grid">
+<label>Pitch / speed: <b id="v_pitch">1.00×</b><input id="pitch" type="range" min="0.5" max="2" step="0.05" value="1"></label>
+<label>Robot (ring mod): <b id="v_robot">0%</b><input id="robot" type="range" min="0" max="100" value="0"></label>
+<label>Echo mix: <b id="v_echo">0%</b><input id="echo" type="range" min="0" max="100" value="0"></label>
+<label>Echo delay: <b id="v_dly">250 ms</b><input id="dly" type="range" min="50" max="600" step="10" value="250"></label>
+</div>
+<h3 style="margin-top:14px">Equalizer (dB)</h3>
+<div class="grid" id="eqs"></div>
+</div>
+
+<div class="card">
+<div class="row" style="margin-bottom:10px">
+<button id="play" class="p" disabled>▶ Play</button>
+<button id="stop" disabled>■ Stop</button>
+<label style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" id="loop"> Loop</label>
+</div>
+<h3>Waveform x(t)</h3><canvas id="cw"></canvas>
+<h3 style="margin-top:10px">Live spectrum |X(f)| (FFT)</h3><canvas id="cs"></canvas>
+<h3 style="margin-top:10px">Equalizer frequency response |H(f)|</h3><canvas id="ch"></canvas>
+</div>
+
+<div class="card">
+<h3>Signals &amp; Systems concepts jo yahan use hue</h3>
+<ul>
+<li><b>Equalizer</b> = 5 LTI filters (shelf + peaking biquads) cascade me. Total H(f) = H₁·H₂·H₃·H₄·H₅, jo upar graph me dikhta hai.</li>
+<li><b>Pitch change</b> = time scaling x(at). Speed badhao to frequencies bhi scale hoti hain (Fourier scaling property).</li>
+<li><b>Robot voice</b> = x(t)·cos(2πf₀t). Time me multiplication = frequency me spectrum shift (modulation property).</li>
+<li><b>Echo</b> = y[n] = x[n] + a·y[n−D], ek feedback LTI system with delay.</li>
+<li><b>Spectrum</b> = DFT/FFT, jo time domain signal ko frequency domain me dikhata hai.</li>
+</ul>
+</div>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+let ctx,buf=null,src=null,eq=[],ring,osc,oscG,dly,fb,wet,dry,master,an;
+const bands=[[100,'lowshelf'],[400,'peaking'],[1000,'peaking'],[3000,'peaking'],[8000,'highshelf']];
+const bandName=['Bass','Low-mid','Mid','High-mid','Treble'];
+
+// EQ sliders
+bands.forEach(([f,t],i)=>{
+  const l=document.createElement('label');
+  l.innerHTML=`${bandName[i]} ${f>=1000?f/1000+'k':f}Hz: <b id="ev${i}">0</b><input id="eq${i}" type="range" min="-15" max="15" value="0">`;
+  $('eqs').appendChild(l);
+});
+
+function status(m,err){const s=$('st');s.textContent=m;s.classList.toggle('err',!!err);}
+
+function init(){
+  if(ctx)return;
+  ctx=new (window.AudioContext||window.webkitAudioContext)();
+  eq=bands.map(([f,t])=>{const b=ctx.createBiquadFilter();b.type=t;b.frequency.value=f;b.Q.value=1.1;return b;});
+  for(let i=0;i<eq.length-1;i++)eq[i].connect(eq[i+1]);
+  ring=ctx.createGain();osc=ctx.createOscillator();osc.frequency.value=50;oscG=ctx.createGain();oscG.gain.value=0;
+  osc.connect(oscG);oscG.connect(ring.gain);osc.start();
+  eq[eq.length-1].connect(ring);
+  dry=ctx.createGain();wet=ctx.createGain();dly=ctx.createDelay(1);fb=ctx.createGain();fb.gain.value=.4;
+  master=ctx.createGain();an=ctx.createAnalyser();an.fftSize=2048;an.smoothingTimeConstant=.8;
+  ring.connect(dry);dry.connect(master);
+  ring.connect(dly);dly.connect(wet);wet.connect(master);dly.connect(fb);fb.connect(dly);
+  master.connect(an);an.connect(ctx.destination);
+  update();
+}
+
+function update(){
+  const p=+$('pitch').value,r=+$('robot').value/100,e=+$('echo').value/100,d=+$('dly').value;
+  $('v_pitch').textContent=p.toFixed(2)+'×';$('v_robot').textContent=Math.round(r*100)+'%';
+  $('v_echo').textContent=Math.round(e*100)+'%';$('v_dly').textContent=d+' ms';
+  bands.forEach((_,i)=>$('ev'+i).textContent=$('eq'+i).value);
+  if(ctx){
+    if(src)src.playbackRate.value=p;
+    ring.gain.value=1-r;oscG.gain.value=r;
+    dry.gain.value=1-e*.5;wet.gain.value=e;dly.delayTime.value=d/1000;
+    eq.forEach((f,i)=>f.gain.value=+$('eq'+i).value);
+  }
+  drawResp();
+}
+document.querySelectorAll('input[type=range]').forEach(i=>i.addEventListener('input',update));
+
+// presets
+const presets={
+ 'Normal':{pitch:1,robot:0,echo:0,eq:[0,0,0,0,0]},
+ 'Chipmunk':{pitch:1.6,robot:0,echo:0,eq:[-6,0,2,4,6]},
+ 'Deep voice':{pitch:.7,robot:0,echo:0,eq:[8,4,0,-3,-6]},
+ 'Robot':{pitch:1,robot:100,echo:15,eq:[0,0,3,3,0]},
+ 'Old radio':{pitch:1,robot:0,echo:0,eq:[-15,-4,8,6,-15]},
+ 'Cave':{pitch:.9,robot:0,echo:70,eq:[4,0,0,-2,-4]},
+ 'Bass boost':{pitch:1,robot:0,echo:0,eq:[12,6,0,0,0]}
+};
+Object.entries(presets).forEach(([n,v])=>{
+  const b=document.createElement('button');b.textContent=n;
+  b.onclick=()=>{$('pitch').value=v.pitch;$('robot').value=v.robot;$('echo').value=v.echo;
+    v.eq.forEach((g,i)=>$('eq'+i).value=g);if(n==='Cave')$('dly').value=380;update();};
+  $('presets').appendChild(b);
+});
+
+// playback
+function play(){
+  if(!buf)return;init();ctx.resume();stop();
+  src=ctx.createBufferSource();src.buffer=buf;src.loop=$('loop').checked;
+  src.connect(eq[0]);src.playbackRate.value=+$('pitch').value;
+  src.onended=()=>{if(src===null)return;};src.start();
+}
+function stop(){if(src){try{src.stop()}catch(e){}src.disconnect();src=null;}}
+$('play').onclick=play;$('stop').onclick=stop;
+$('loop').onchange=()=>{if(src)src.loop=$('loop').checked;};
+
+function setBuf(b,msg){buf=b;$('play').disabled=$('stop').disabled=false;status(msg+' Ab Play dabao.');}
+
+// recording
+let mr,chunks=[];
+$('rec').onclick=async()=>{
+  if(mr&&mr.state==='recording'){mr.stop();return;}
+  try{
+    init();
+    const st=await navigator.mediaDevices.getUserMedia({audio:true});
+    mr=new MediaRecorder(st);chunks=[];
+    mr.ondataavailable=e=>chunks.push(e.data);
+    mr.onstop=async()=>{
+      st.getTracks().forEach(t=>t.stop());$('rec').textContent='● Record';
+      try{const ab=await new Blob(chunks).arrayBuffer();setBuf(await ctx.decodeAudioData(ab),'Recording ready.');}
+      catch(e){status('Recording decode nahi hui: '+e.message,1);}
+    };
+    mr.start();$('rec').textContent='■ Stop recording';status('Recording... bol do, phir Stop dabao.');
+  }catch(e){status('Mic access nahi mila ('+e.name+'). File upload ya Demo voice use karo.',1);}
+};
+$('file').onchange=async e=>{
+  const f=e.target.files[0];if(!f)return;
+  try{init();setBuf(await ctx.decodeAudioData(await f.arrayBuffer()),'File load ho gayi.');}
+  catch(err){status('File decode nahi hui: '+err.message,1);}
+};
+$('demo').onclick=()=>{
+  init();const sr=ctx.sampleRate,N=sr*3,b=ctx.createBuffer(1,N,sr),d=b.getChannelData(0);
+  let ph=0;
+  for(let n=0;n<N;n++){
+    const t=n/sr,f0=130+25*Math.sin(2*Math.PI*.8*t)+15*Math.sin(2*Math.PI*5*t);
+    ph+=2*Math.PI*f0/sr;let s=0;
+    for(let h=1;h<=25;h++){const fh=h*f0;
+      const form=Math.exp(-Math.pow((fh-700)/300,2))+.7*Math.exp(-Math.pow((fh-1500)/400,2))+.3*Math.exp(-Math.pow((fh-2600)/500,2));
+      s+=form/h*Math.sin(h*ph);}
+    const env=Math.max(0,Math.sin(2*Math.PI*1.5*t))**.5;
+    d[n]=.35*s*env;
+  }
+  setBuf(b,'Demo voice (synthetic) ready.');
+};
+
+// drawing
+function setup(cv){const d=devicePixelRatio||1,W=cv.clientWidth,H=cv.clientHeight;
+  cv.width=W*d;cv.height=H*d;const g=cv.getContext('2d');g.scale(d,d);g.clearRect(0,0,W,H);return[g,W,H];}
+function drawResp(){
+  const cv=$('ch');const[g,W,H]=setup(cv);const n=160,fr=new Float32Array(n),mg=new Float32Array(n),ph=new Float32Array(n),tot=new Array(n).fill(1);
+  const sr=ctx?ctx.sampleRate:48000;
+  for(let i=0;i<n;i++)fr[i]=20*Math.pow(1000,i/(n-1));
+  const useF=ctx?eq:bands.map(([f,t],i)=>null);
+  if(ctx){eq.forEach(f=>{f.getFrequencyResponse(fr,mg,ph);for(let i=0;i<n;i++)tot[i]*=mg[i];});}
+  g.strokeStyle=css('--line');g.fillStyle=css('--mut');g.font='11px system-ui';g.lineWidth=1;
+  [-15,0,15].forEach(db=>{const y=H/2-db/18*(H/2-8);g.beginPath();g.moveTo(0,y);g.lineTo(W,y);g.stroke();g.fillText(db+' dB',2,y-2);});
+  [100,1000,10000].forEach(f=>{const x=Math.log(f/20)/Math.log(1000)*W;g.beginPath();g.moveTo(x,0);g.lineTo(x,H);g.stroke();g.fillText(f>=1000?f/1000+'k':f,x+2,H-3);});
+  g.strokeStyle=css('--a');g.lineWidth=2;g.beginPath();
+  for(let i=0;i<n;i++){const db=20*Math.log10(tot[i]||1),x=i/(n-1)*W,y=H/2-Math.max(-18,Math.min(18,db))/18*(H/2-8);i?g.lineTo(x,y):g.moveTo(x,y);}
+  g.stroke();
+}
+function loop(){
+  requestAnimationFrame(loop);
+  if(!an)return;
+  let [g,W,H]=setup($('cw'));const td=new Uint8Array(an.fftSize);an.getByteTimeDomainData(td);
+  g.strokeStyle=css('--a');g.lineWidth=1.5;g.beginPath();
+  for(let i=0;i<td.length;i+=2){const x=i/td.length*W,y=td[i]/255*H;i?g.lineTo(x,y):g.moveTo(x,y);}g.stroke();
+  [g,W,H]=setup($('cs'));const fd=new Uint8Array(an.frequencyBinCount);an.getByteFrequencyData(fd);
+  const maxBin=Math.floor(fd.length*(8000/(ctx.sampleRate/2))),bw=W/maxBin;
+  g.fillStyle=css('--b');
+  for(let i=0;i<maxBin;i++){const h=fd[i]/255*(H-14);g.fillRect(i*bw,H-14-h,Math.max(1,bw-.5),h);}
+  g.fillStyle=css('--mut');g.font='11px system-ui';
+  [0,2000,4000,6000,8000].forEach(f=>g.fillText(f/1000+'k',f/8000*(W-22),H-2));
+}
+addEventListener('resize',drawResp);
+matchMedia('(prefers-color-scheme:dark)').addEventListener('change',drawResp);
+update();loop();
+</script>
+</body>
+</html>
